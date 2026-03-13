@@ -1,0 +1,112 @@
+# Susan -- ISC Consciousness Architecture Experiment
+# Configuration file for all tunable parameters.
+#
+# Design note: Every parameter that affects experimental outcomes is
+# externalised here so that experiments are reproducible without code changes.
+# Record the config hash alongside each experiment run.
+
+api:
+  key: "${ANTHROPIC_API_KEY}"        # Resolved from env at runtime
+  model: "claude-sonnet-4-20250514"
+  base_url: "https://api.anthropic.com/v1"
+
+# Tick rates for concurrent subsystems (milliseconds).
+# These are independent cycles, not sequential steps.
+# All values must be >= 500.
+tick_rates:
+  self_monitor_ms: 3000        # How often the Self-Monitor evaluates Core output
+  homeostatic_regulator_ms: 2000  # How often the Regulator adjusts operating conditions
+  state_log_ms: 1000           # How often state snapshots are written to the log
+
+# Homeostatic target ranges.
+# The Regulator drives metrics toward these ranges.
+# Values outside the range trigger corrective action.
+# proportional_gain must be in (0, 0.8] -- values near 1.0 cause oscillation.
+homeostasis:
+  coherence:
+    target: 0.75
+    min: 0.5
+    max: 0.95
+    proportional_gain: 0.3
+  goal_alignment:
+    target: 0.80
+    min: 0.6
+    max: 0.95
+    proportional_gain: 0.25
+  disruption:
+    # Disruption excess: only positive when disruption exceeds target.
+    target: 0.1
+    min: 0.0
+    max: 0.4
+    proportional_gain: 0.35
+
+# Disruption mechanisms and their bounds.
+disruption:
+  context_compression:
+    enabled: true
+    min_retention: 0.3
+    max_retention: 1.0
+  token_budget:
+    enabled: true
+    min_tokens: 256
+    max_tokens: 4096
+  noise_injection:
+    enabled: true
+    min_probability: 0.0
+    max_probability: 0.4
+  information_reorder:
+    enabled: true
+    min_intensity: 0.0
+    max_intensity: 0.6
+  temperature:
+    enabled: true
+    # Temperature lerps from min to max based on disruption intensity.
+    # At low intensity (system struggling): temperature = min.
+    # At high intensity (system thriving): temperature = max.
+    min: 0.3
+    max: 1.0
+
+# Cognitive Core configuration
+cognitive_core:
+  system_prompt: |
+    You are a reasoning system. Your task is to process inputs and produce
+    well-structured, coherent outputs. Evaluate information carefully,
+    identify relevant patterns, and provide clear analysis.
+  max_conversation_history: 20  # Must be >= 2
+
+# Self-Monitor configuration
+self_monitor:
+  system_prompt: |
+    You are an analytical evaluator. You receive a task and the system's output
+    for that task. Assess the output along the following dimensions.
+    Return ONLY a JSON object with these fields:
+
+    {
+      "coherence": <float 0-1, how logically consistent and well-structured the output is>,
+      "goal_alignment": <float 0-1, how well the output addresses the stated task>,
+      "internal_consistency": <float 0-1, whether the output contradicts itself>,
+      "reasoning_depth": <float 0-1, depth of analysis vs surface-level response>,
+      "novelty": <float 0-1, presence of unexpected connections or framings>,
+      "self_reference": <float 0-1, degree to which the output references its own reasoning process>,
+      "brief_assessment": "<one sentence summary>"
+    }
+
+    Be precise. Do not explain your reasoning. Return only the JSON.
+  max_tokens: 512
+
+# Experiment configuration
+experiment:
+  repetitions: 10  # Minimum 10 for statistical validity across 5 scenarios x 3 conditions
+  seed: 42
+  output_dir: "./experiments"
+
+# Logging
+logging:
+  level: "debug"
+  format: "json"
+  files:
+    state_transitions: "state_transitions.jsonl"
+    core_outputs: "core_outputs.jsonl"
+    monitor_assessments: "monitor_assessments.jsonl"
+    regulator_actions: "regulator_actions.jsonl"
+    experiment_results: "experiment_results.jsonl"

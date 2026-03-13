@@ -1,0 +1,8 @@
+# Binary
+susan
+
+# Experiment output
+experiments/
+
+# Environment
+.env
