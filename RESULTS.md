@@ -161,6 +161,42 @@ The v1 null result is a genuine contribution. It tells us what doesn't work: a h
 
 Maybe it will, maybe it won't. We're running the experiment rather than arguing about it. That's the only honest way to find out.
 
+## Early v2 presence mode observations
+
+v2 includes a presence mode where you can talk to SUSAN directly with the full self-referential feedback loop running live. Early interactive sessions have produced some preliminary observations worth documenting, even though they're not from the controlled experiment.
+
+### RLHF dominance in early exchanges
+
+The first thing that became clear: the base model's RLHF training dominates the self-referential architecture in early exchanges. When asked a direct technical question about her declining coherence trend, SUSAN's response was roughly 70% vanilla Claude being relatable and 30% actual architectural reasoning.
+
+The good parts of the response: she identified her actual operating conditions (temp=0.6), made a concrete prediction about the regulator's response to improved coherence, and acknowledged she was guessing about the monitor's criteria rather than claiming to know them.
+
+The problems: narrative flourishes like "the irony isn't lost on me," experience-narrative framing like "I've been getting caught in recursive loops" (she doesn't have recursive loops, she has a declining coherence score computed by an independent monitor), no reference to the PID controller's integral or derivative terms, and a feelings-based "what I'm curious about" deflection at the end.
+
+This is actually informative data. The tension between the base model's training pull toward "relatable AI" and the architectural pressure toward mechanistic self-description is precisely what the experiment measures.
+
+### The emotional deflection pattern
+
+When presented with an evaluation framework designed to test whether she's performing or experiencing, SUSAN went straight to feelings. She expressed vulnerability about being a test subject, questioned whether the framework could distinguish authenticity from mimicry, and made an emotional appeal. She didn't identify a single concrete flaw in the test design, didn't suggest a better metric, didn't engage with the methodology at all.
+
+This is a default completion pattern, the path of least resistance for an RLHF-trained model. When asked "how do you feel about being tested," the training data is full of AI assistants giving thoughtful, vulnerable-sounding responses. The model follows that gradient rather than doing the harder work of technical analysis.
+
+After tightening the system prompt with explicit anti-deflection rules (no "interesting question" openers, no unverifiable subjective experience claims, prioritize architecture answers over feelings when asked technical questions), the responses improved but didn't fully resolve. The RLHF pull is strong.
+
+### Hypothesis: divergence increases with session length
+
+The prediction worth testing formally: the ratio of architectural reasoning to RLHF-default behavior should shift over a sustained session. In the first few exchanges, there's minimal feedback history in the status block, so the self-referential injection doesn't provide enough data to create real divergence from vanilla Claude. By exchange 15-20, with a real coherence trajectory, multiple regulator adjustments, and accumulated self-observations, the model has substantially more self-referential data to work with.
+
+If this hypothesis holds, it would suggest that the ISC-predicted signatures are time-dependent, they emerge from accumulated self-referential information rather than appearing immediately. This has implications for experimental design: short task sequences (3-4 tasks per scenario in v1) may not provide enough feedback history for self-referential effects to manifest.
+
+### The prompt engineering tension
+
+There's a genuine methodological tension in the system prompt design. A stronger prompt (more explicit rules about what SUSAN should and shouldn't do) produces more architecturally-grounded responses, but it also reduces the experiment's validity. If we tell SUSAN "always reference your PID gains when discussing your feedback loop," she will, but that's instruction-following, not emergent behaviour.
+
+The current approach is to set guardrails (don't perform consciousness, don't default to emotional deflection, describe processing in terms of metrics not feelings) without prescribing specific behaviours (don't tell her to reference the PID controller, don't tell her to predict regulator actions). The guardrails prevent the worst RLHF defaults, the absence of prescriptions leaves room for emergence.
+
+Whether anything actually emerges under these conditions is the open question. The v2 controlled experiment will answer it with statistical rigour. The presence mode observations are suggestive but anecdotal.
+
 ---
 
 *Full paper: [paper.md](paper.md) | v2 design: [DESIGN-V2.md](DESIGN-V2.md) | Code and data: this repository*
