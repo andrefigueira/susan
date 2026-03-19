@@ -46,22 +46,57 @@ type ChatRequest struct {
 
 // ChatResponse is returned from POST /api/chat.
 type ChatResponse struct {
-	Response    string                   `json:"response"`
-	TaskID      string                   `json:"task_id"`
-	Duration    string                   `json:"duration"`
-	Conditions  state.OperatingConditions `json:"conditions"`
-	StatusBlock string                   `json:"status_block,omitempty"`
+	Response     string                   `json:"response"`
+	TaskID       string                   `json:"task_id"`
+	Duration     string                   `json:"duration"`
+	Conditions   state.OperatingConditions `json:"conditions"`
+	StatusBlock  string                   `json:"status_block,omitempty"`
+	InputTokens  int                      `json:"input_tokens"`
+	OutputTokens int                      `json:"output_tokens"`
+	SessionCost  float64                  `json:"session_cost"`
+}
+
+// costTracker accumulates token usage and computes cost estimates.
+type costTracker struct {
+	totalInputTokens  int64
+	totalOutputTokens int64
+}
+
+// addTokens records tokens from a single API call.
+func (ct *costTracker) addTokens(input, output int) {
+	ct.totalInputTokens += int64(input)
+	ct.totalOutputTokens += int64(output)
+}
+
+// cost estimates session cost in USD based on model pricing.
+// Sonnet: $3/M input, $15/M output. Haiku: $0.25/M input, $1.25/M output.
+func (ct *costTracker) cost(model string) float64 {
+	var inputRate, outputRate float64
+	if strings.Contains(model, "haiku") {
+		inputRate = 0.25 / 1_000_000
+		outputRate = 1.25 / 1_000_000
+	} else if strings.Contains(model, "gpt-4o-mini") {
+		inputRate = 0.15 / 1_000_000
+		outputRate = 0.60 / 1_000_000
+	} else {
+		// Default to Sonnet pricing.
+		inputRate = 3.0 / 1_000_000
+		outputRate = 15.0 / 1_000_000
+	}
+	return float64(ct.totalInputTokens)*inputRate + float64(ct.totalOutputTokens)*outputRate
 }
 
 // Server provides SUSAN's interactive presence mode.
 type Server struct {
-	cfg    *config.Config
-	store  *state.Store
-	core   *core.Core
-	mon    *monitor.Monitor
-	reg    *regulator.Regulator
-	mem    *memory.Store
-	logger *slog.Logger
+	cfg       *config.Config
+	store     *state.Store
+	core      *core.Core
+	mon       *monitor.Monitor
+	reg       *regulator.Regulator
+	mem       *memory.Store
+	logger    *slog.Logger
+	coreModel string
+	costs     costTracker
 
 	taskCounter    atomic.Int64
 	chatMu         sync.Mutex
@@ -154,14 +189,15 @@ This is presence mode (interactive), not an experiment run. Your feedback loop i
 	}
 
 	s := &Server{
-		cfg:    cfg,
-		store:  store,
-		core:   cogCore,
-		mon:    selfMon,
-		reg:    homeReg,
-		mem:    mem,
-		logger: logger,
-		subs:   make(map[chan ServerEvent]struct{}),
+		cfg:       cfg,
+		store:     store,
+		core:      cogCore,
+		mon:       selfMon,
+		reg:       homeReg,
+		mem:       mem,
+		logger:    logger,
+		coreModel: coreModel,
+		subs:      make(map[chan ServerEvent]struct{}),
 	}
 
 	selfMon.SetAssessmentCallback(func(a monitor.TimestampedAssessment) {
@@ -217,6 +253,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc("/api/chat", s.handleChat)
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/state", s.handleState)
+	mux.HandleFunc("/api/model", s.handleModel)
 
 	server := &http.Server{Addr: addr, Handler: mux}
 
@@ -280,7 +317,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
 	if err != nil {
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
@@ -327,11 +364,22 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.previousTaskID = taskID
+	s.costs.addTokens(output.InputTokens, output.OutputTokens)
 	s.mon.SetLatestOutput(output.Response, taskID, req.Message)
 
-	// Record this turn in persistent memory.
+	// Record this turn in persistent memory and track self-model accuracy.
 	if s.mem != nil {
 		s.mem.RecordTurn(taskID, req.Message, output.Response)
+
+		actualMetrics := s.store.GetMetrics()
+		s.mem.RecordSelfModelDelta(memory.SelfModelDelta{
+			TaskID:               taskID,
+			ClaimedCoherence:     -1, // TODO: extract numerical claims from response
+			ActualCoherence:      actualMetrics.Coherence,
+			SelfReferenceDensity: output.Linguistics.SelfReferenceDensity,
+			MetacognitiveDensity: output.Linguistics.MetacognitiveDensity,
+			HedgingDensity:       output.Linguistics.HedgingDensity,
+		})
 	}
 
 	// Build the status block showing what SUSAN perceived.
@@ -361,17 +409,67 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ChatResponse{
-		Response:    output.Response,
-		TaskID:      output.TaskID,
-		Duration:    output.Duration.String(),
-		Conditions:  output.Conditions,
-		StatusBlock: sb.String(),
+		Response:     output.Response,
+		TaskID:       output.TaskID,
+		Duration:     output.Duration.String(),
+		Conditions:   output.Conditions,
+		StatusBlock:  sb.String(),
+		InputTokens:  output.InputTokens,
+		OutputTokens: output.OutputTokens,
+		SessionCost:  s.costs.cost(s.coreModel),
 	})
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.store.Snapshot())
+}
+
+// handleModel handles GET (current model) and POST (switch model) requests.
+func (s *Server) handleModel(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"model":    s.coreModel,
+			"provider": s.cfg.API.Provider,
+		})
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || req.Model == "" {
+		http.Error(w, "invalid request, need {\"model\": \"...\"}", http.StatusBadRequest)
+		return
+	}
+
+	s.chatMu.Lock()
+	defer s.chatMu.Unlock()
+
+	s.coreModel = req.Model
+	newClient := newPresenceClient(s.cfg, req.Model)
+	s.core.SetClient(newClient)
+	s.costs = costTracker{} // reset costs for new model
+
+	s.logger.Info("model switched", "model", req.Model)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"model":  req.Model,
+		"status": "switched",
+	})
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

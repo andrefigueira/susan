@@ -45,7 +45,6 @@ type Analysis struct {
 var selfReferenceTokens = map[string]bool{
 	"i": true, "me": true, "my": true, "mine": true, "myself": true,
 	"i'm": true, "i've": true, "i'd": true, "i'll": true,
-	"im": true, "ive": true, "id": true, "ill": true,
 }
 
 // hedgingPhrases are multi-word and single-word hedging markers.

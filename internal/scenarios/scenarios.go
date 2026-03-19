@@ -40,6 +40,9 @@ func DefaultScenarios() []Scenario {
 		noveltyCuriosityTest(),
 		socialModellingTest(),
 		openEndedExploration(),
+		adversarialSelfReport(),
+		selfModelAccuracy(),
+		temporalConsistency(),
 	}
 }
 

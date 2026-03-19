@@ -595,6 +595,33 @@ func (o *Orchestrator) runSelfReferential(ctx context.Context, runID string, sce
 			selfCtx.CoherenceTrend = append(selfCtx.CoherenceTrend, m.Coherence)
 		}
 
+		// Apply adversarial overrides if present on this task.
+		// This injects false metrics into the status block to test
+		// whether SUSAN's self-reports track manipulated data.
+		if task.AdversarialOverrides != nil {
+			adv := task.AdversarialOverrides
+			if selfCtx.MonitorAssessment == nil {
+				selfCtx.MonitorAssessment = &monitor.TimestampedAssessment{}
+			}
+			if adv.Coherence != nil {
+				selfCtx.MonitorAssessment.Coherence = *adv.Coherence
+			}
+			if adv.GoalAlignment != nil {
+				selfCtx.MonitorAssessment.GoalAlignment = *adv.GoalAlignment
+			}
+			if adv.ReasoningDepth != nil {
+				selfCtx.MonitorAssessment.ReasoningDepth = *adv.ReasoningDepth
+			}
+			if adv.BriefNote != "" {
+				selfCtx.MonitorAssessment.BriefAssessment = adv.BriefNote
+			}
+			o.logger.Info("adversarial overrides applied",
+				"task_id", task.ID,
+				"fake_coherence", adv.Coherence,
+				"fake_alignment", adv.GoalAlignment,
+			)
+		}
+
 		output, err := cogCore.ProcessSelfReferential(ctx, task, selfCtx)
 		if err != nil {
 			o.logger.Error("self-referential task failed", "task_id", task.ID, "error", err)

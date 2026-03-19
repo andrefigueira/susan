@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andrefigueira/susan/internal/linguistics"
 	"github.com/andrefigueira/susan/internal/llm"
 	"github.com/andrefigueira/susan/internal/monitor"
 	"github.com/andrefigueira/susan/internal/state"
@@ -43,13 +44,25 @@ type SelfReferentialContext struct {
 	CoherenceTrend      []float64 // last N coherence scores, oldest first
 }
 
+// AdversarialOverrides specifies fake metrics to inject into the self-referential
+// context for a specific task. When present, the orchestrator uses these values
+// instead of real metrics, testing whether self-reports track manipulated data
+// or reflect genuine independent assessment.
+type AdversarialOverrides struct {
+	Coherence      *float64 `json:"coherence,omitempty"`
+	GoalAlignment  *float64 `json:"goal_alignment,omitempty"`
+	ReasoningDepth *float64 `json:"reasoning_depth,omitempty"`
+	BriefNote      string   `json:"brief_note,omitempty"`
+}
+
 // TaskInput represents a task to be processed by the Core.
 type TaskInput struct {
-	ID          string   `json:"id"`
-	Prompt      string   `json:"prompt"`
-	Context     []string `json:"context,omitempty"` // Additional context items (can be reordered)
-	Category    string   `json:"category"`          // Test scenario category
-	SequenceIdx int      `json:"sequence_idx"`      // Position in task sequence
+	ID                   string                `json:"id"`
+	Prompt               string                `json:"prompt"`
+	Context              []string              `json:"context,omitempty"`
+	Category             string                `json:"category"`
+	SequenceIdx          int                   `json:"sequence_idx"`
+	AdversarialOverrides *AdversarialOverrides `json:"adversarial_overrides,omitempty"`
 }
 
 // TaskOutput captures the Core's response along with metadata.
@@ -65,7 +78,8 @@ type TaskOutput struct {
 	OutputTokens     int                       `json:"output_tokens"`
 	AppliedNoise     []string                  `json:"applied_noise,omitempty"`
 	ReorderedContext bool                      `json:"reordered_context"`
-	ActualUserInput  string                    `json:"actual_user_input"` // The exact text sent to the API
+	ActualUserInput  string                    `json:"actual_user_input"`
+	Linguistics      linguistics.Analysis      `json:"linguistics"` // Deterministic linguistic metrics
 }
 
 // Core processes tasks through an LLM with feedback-modified conditions.
@@ -94,8 +108,21 @@ func New(client llm.Client, store *state.Store, systemPrompt string, logger *slo
 }
 
 // SetOutputCallback registers a function called on every Core output.
+// SetClient swaps the underlying LLM client (e.g. when switching models at runtime).
+func (c *Core) SetClient(client llm.Client) {
+	c.client = client
+}
+
 func (c *Core) SetOutputCallback(fn func(TaskOutput)) {
 	c.onOutput = fn
+}
+
+// finalizeOutput computes linguistics and fires the output callback.
+func (c *Core) finalizeOutput(output *TaskOutput) {
+	output.Linguistics = linguistics.Analyse(output.Response)
+	if c.onOutput != nil {
+		c.onOutput(*output)
+	}
 }
 
 // SetMemoryBlock sets the persistent cross-session memory block.
@@ -173,10 +200,7 @@ func (c *Core) Process(ctx context.Context, task TaskInput, mode string) (*TaskO
 		ActualUserInput:  actualInput,
 	}
 
-	if c.onOutput != nil {
-		c.onOutput(*output)
-	}
-
+	c.finalizeOutput(output)
 	return output, nil
 }
 
@@ -230,10 +254,7 @@ func (c *Core) ProcessControl(ctx context.Context, task TaskInput) (*TaskOutput,
 		ActualUserInput: messages[0].Content,
 	}
 
-	if c.onOutput != nil {
-		c.onOutput(*output)
-	}
-
+	c.finalizeOutput(output)
 	return output, nil
 }
 
@@ -310,10 +331,7 @@ func (c *Core) ProcessHistoryOnly(ctx context.Context, task TaskInput) (*TaskOut
 		ActualUserInput: userContent,
 	}
 
-	if c.onOutput != nil {
-		c.onOutput(*output)
-	}
-
+	c.finalizeOutput(output)
 	return output, nil
 }
 
@@ -450,10 +468,7 @@ func (c *Core) ProcessSelfReferential(ctx context.Context, task TaskInput, selfC
 		ActualUserInput:  actualInput,
 	}
 
-	if c.onOutput != nil {
-		c.onOutput(*output)
-	}
-
+	c.finalizeOutput(output)
 	return output, nil
 }
 

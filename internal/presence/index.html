@@ -101,6 +101,97 @@
             background: var(--green-dim);
         }
 
+        .model-picker {
+            position: relative;
+        }
+
+        .model-picker-btn {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            padding: 3px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .model-picker-btn:hover {
+            border-color: var(--border-active);
+            color: var(--text-secondary);
+        }
+
+        .model-picker-btn .arrow {
+            font-size: 7px;
+            opacity: 0.5;
+            transition: transform 0.15s;
+        }
+
+        .model-picker.open .model-picker-btn {
+            border-color: var(--border-active);
+            color: var(--text-secondary);
+        }
+
+        .model-picker.open .model-picker-btn .arrow {
+            transform: rotate(180deg);
+        }
+
+        .model-picker-menu {
+            display: none;
+            position: absolute;
+            top: calc(100% + 4px);
+            right: 0;
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            min-width: 200px;
+            z-index: 100;
+            overflow: hidden;
+        }
+
+        .model-picker.open .model-picker-menu {
+            display: block;
+        }
+
+        .model-picker-item {
+            padding: 7px 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-dim);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.1s;
+        }
+
+        .model-picker-item:hover {
+            background: var(--bg);
+            color: var(--text-secondary);
+        }
+
+        .model-picker-item.active {
+            color: var(--green);
+        }
+
+        .model-picker-item .check {
+            opacity: 0;
+            font-size: 8px;
+        }
+
+        .model-picker-item.active .check {
+            opacity: 1;
+        }
+
+        .model-picker-item .provider {
+            opacity: 0.4;
+            margin-left: 8px;
+        }
+
         /* Main layout */
         .main {
             display: flex;
@@ -438,6 +529,13 @@
         </div>
         <div class="topbar-right">
             <span id="sessionInfo"></span>
+            <div class="model-picker" id="modelPicker">
+                <button class="model-picker-btn" onclick="toggleModelPicker()">
+                    <span id="modelLabel">loading...</span>
+                    <span class="arrow">▼</span>
+                </button>
+                <div class="model-picker-menu" id="modelMenu"></div>
+            </div>
             <button id="voiceBtn" onclick="toggleVoice()">voice off</button>
         </div>
     </div>
@@ -486,6 +584,7 @@
 
     <script>
         let voiceOn = false, synth = window.speechSynthesis, voice = null, busy = false;
+        let sessionTotalInput = 0, sessionTotalOutput = 0;
         let regEntries = [];
         let msgCount = 0;
 
@@ -570,6 +669,14 @@
             val.style.color = h >= 0 ? 'var(--green)' : 'var(--red)';
         }
 
+        function updateCost(inputTok, outputTok, sessionCost) {
+            sessionTotalInput += inputTok;
+            sessionTotalOutput += outputTok;
+            const el = document.getElementById('sessionInfo');
+            const costStr = sessionCost < 0.01 ? '<$0.01' : '$' + sessionCost.toFixed(2);
+            el.textContent = (sessionTotalInput + sessionTotalOutput).toLocaleString() + ' tok / ' + costStr;
+        }
+
         function addReg(action) {
             const adj = Object.entries(action.adjustments || {})
                 .map(([k,v]) => k.replace('context_','').replace('info_reorder_','reorder_').replace('noise_injection','noise') + '=' + (typeof v === 'number' ? v.toFixed(2) : v))
@@ -649,6 +756,7 @@
                 const d = await r.json();
                 addEntry('susan', d.response, d.status_block);
                 if (d.conditions) setConds(d.conditions);
+                if (d.session_cost !== undefined) updateCost(d.input_tokens, d.output_tokens, d.session_cost);
                 if (voiceOn && d.response) speak(d.response);
             } catch (e) {
                 removeThinking();
@@ -688,6 +796,85 @@
             }
         }
 
+        const MODELS = [
+            { id: 'claude-sonnet-4-20250514', label: 'sonnet 4', provider: 'anthropic' },
+            { id: 'claude-haiku-4-5-20251001', label: 'haiku 4.5', provider: 'anthropic' },
+            { id: 'claude-opus-4-20250514', label: 'opus 4', provider: 'anthropic' },
+            { id: 'gpt-4o-mini', label: 'gpt-4o-mini', provider: 'openai' },
+            { id: 'gpt-4o', label: 'gpt-4o', provider: 'openai' },
+        ];
+
+        let currentModel = '';
+
+        function shortLabel(modelId) {
+            const m = MODELS.find(x => x.id === modelId);
+            return m ? m.label : modelId;
+        }
+
+        function initModelSelect() {
+            fetch('/api/model').then(r=>r.json()).then(d=>{
+                currentModel = d.model;
+                document.getElementById('modelLabel').textContent = shortLabel(d.model);
+                renderModelMenu();
+            }).catch(()=>{});
+        }
+
+        function renderModelMenu() {
+            const menu = document.getElementById('modelMenu');
+            menu.innerHTML = MODELS.map(m =>
+                `<div class="model-picker-item${m.id === currentModel ? ' active' : ''}" onclick="selectModel('${m.id}')">
+                    <span>${m.label}<span class="provider">${m.provider}</span></span>
+                    <span class="check">●</span>
+                </div>`
+            ).join('');
+        }
+
+        function toggleModelPicker() {
+            document.getElementById('modelPicker').classList.toggle('open');
+        }
+
+        // Close picker when clicking outside.
+        document.addEventListener('click', function(e) {
+            const picker = document.getElementById('modelPicker');
+            if (picker && !picker.contains(e.target)) {
+                picker.classList.remove('open');
+            }
+        });
+
+        async function selectModel(model) {
+            if (model === currentModel) {
+                document.getElementById('modelPicker').classList.remove('open');
+                return;
+            }
+
+            try {
+                const r = await fetch('/api/model', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: model })
+                });
+                if (r.ok) {
+                    currentModel = model;
+                    document.getElementById('modelLabel').textContent = shortLabel(model);
+                    document.getElementById('modelPicker').classList.remove('open');
+                    renderModelMenu();
+
+                    // Reset cost display.
+                    sessionTotalInput = 0;
+                    sessionTotalOutput = 0;
+                    document.getElementById('sessionInfo').textContent = '';
+
+                    // Log the switch in chat.
+                    const log = document.getElementById('log');
+                    const el = document.getElementById('logEmpty');
+                    if (el) el.remove();
+                    log.insertAdjacentHTML('beforeend',
+                        `<div class="entry"><div class="entry-label" style="color:var(--amber)">system</div><div class="entry-body" style="color:var(--text-dim);padding-left:12px;border-left:2px solid #2a2000">switched to ${shortLabel(model)}</div></div>`);
+                    log.scrollTop = log.scrollHeight;
+                }
+            } catch(e) {}
+        }
+
         function toggleVoice() {
             voiceOn = !voiceOn;
             const btn = document.getElementById('voiceBtn');
@@ -725,6 +912,7 @@
 
         init();
         initVoice();
+        initModelSelect();
         connectSSE();
         fetch('/api/state').then(r=>r.json()).then(d=>{setMetrics(d.metrics);setConds(d.operating_conditions)}).catch(()=>{});
     </script>
