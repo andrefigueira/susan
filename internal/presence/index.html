@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SUSAN</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #0a0a0a;
+            --bg-raised: #111;
+            --bg-input: #161616;
+            --border: #1f1f1f;
+            --border-active: #2a2a2a;
+            --text: #c8c8c8;
+            --text-secondary: #707070;
+            --text-dim: #404040;
+            --green: #4ade80;
+            --green-dim: rgba(74, 222, 128, 0.08);
+            --amber: #fbbf24;
+            --amber-dim: rgba(251, 191, 36, 0.08);
+            --red: #f87171;
+            --red-dim: rgba(248, 113, 113, 0.08);
+            --blue: #60a5fa;
+        }
+
+        body {
+            font-family: 'IBM Plex Sans', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Top bar — minimal, functional */
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            height: 40px;
+            border-bottom: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-secondary);
+        }
+
+        .topbar-left .name {
+            color: var(--text);
+            font-weight: 500;
+            letter-spacing: 0.5px;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--green);
+            opacity: 0.8;
+        }
+
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            color: var(--text-dim);
+        }
+
+        .topbar-right button {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            padding: 3px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .topbar-right button:hover {
+            border-color: var(--border-active);
+            color: var(--text-secondary);
+        }
+
+        .topbar-right button.active {
+            border-color: var(--green);
+            color: var(--green);
+            background: var(--green-dim);
+        }
+
+        /* Main layout */
+        .main {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* ---- Chat ---- */
+        .chat {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .log {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 24px;
+        }
+
+        .log::-webkit-scrollbar { width: 4px; }
+        .log::-webkit-scrollbar-track { background: transparent; }
+        .log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .log-empty {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 8px;
+            color: var(--text-dim);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }
+
+        .log-empty span:first-child {
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        .entry {
+            margin-bottom: 20px;
+            line-height: 1.65;
+            font-size: 14px;
+        }
+
+        .entry-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+        }
+
+        .entry-label.human { color: var(--text-dim); }
+        .entry-label.susan { color: var(--green); opacity: 0.6; }
+
+        .entry-body {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-weight: 300;
+        }
+
+        .entry-body.human {
+            color: var(--text-secondary);
+            padding-left: 12px;
+            border-left: 2px solid var(--border);
+        }
+
+        .entry-body.susan {
+            padding-left: 12px;
+            border-left: 2px solid #1a2e1a;
+        }
+
+        .entry-perception {
+            margin-top: 8px;
+            padding-left: 12px;
+        }
+
+        .perception-toggle {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-dim);
+            cursor: pointer;
+            user-select: none;
+            display: inline-block;
+            padding: 2px 0;
+        }
+
+        .perception-toggle:hover { color: var(--text-secondary); }
+
+        .perception-detail {
+            display: none;
+            margin-top: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-dim);
+            line-height: 1.5;
+            padding: 8px 10px;
+            background: var(--bg-raised);
+            border-radius: 3px;
+            border: 1px solid var(--border);
+        }
+
+        .perception-detail.open { display: block; }
+
+        .entry-thinking {
+            margin-bottom: 20px;
+        }
+
+        .entry-thinking .entry-label { color: var(--text-dim); }
+
+        .entry-thinking .dots {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-dim);
+            padding-left: 12px;
+            border-left: 2px solid #1a2e1a;
+        }
+
+        .entry-thinking .dots::after {
+            content: '...';
+            animation: blink 1.2s steps(4, end) infinite;
+        }
+
+        @keyframes blink {
+            0% { opacity: 0.2; }
+            50% { opacity: 1; }
+            100% { opacity: 0.2; }
+        }
+
+        /* Input */
+        .input-bar {
+            padding: 12px 24px 16px;
+            border-top: 1px solid var(--border);
+        }
+
+        .input-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .input-row input {
+            flex: 1;
+            padding: 10px 14px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            background: var(--bg-input);
+            color: var(--text);
+            font-family: 'IBM Plex Sans', sans-serif;
+            font-size: 14px;
+            font-weight: 300;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        .input-row input:focus { border-color: var(--border-active); }
+        .input-row input::placeholder { color: var(--text-dim); }
+
+        .input-row button {
+            padding: 10px 18px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            background: var(--bg-raised);
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .input-row button:hover {
+            border-color: var(--border-active);
+            color: var(--text);
+        }
+
+        .input-row button:disabled {
+            opacity: 0.3;
+            cursor: default;
+        }
+
+        /* ---- Instruments panel ---- */
+        .instruments {
+            width: 300px;
+            border-left: 1px solid var(--border);
+            overflow-y: auto;
+            padding: 16px;
+            flex-shrink: 0;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .instruments::-webkit-scrollbar { width: 4px; }
+        .instruments::-webkit-scrollbar-track { background: transparent; }
+        .instruments::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .inst-group {
+            margin-bottom: 24px;
+        }
+
+        .inst-group-title {
+            font-size: 9px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-dim);
+            margin-bottom: 10px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        /* Metric rows */
+        .m-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            height: 18px;
+        }
+
+        .m-name {
+            font-size: 10px;
+            color: var(--text-dim);
+            width: 80px;
+            flex-shrink: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .m-bar-track {
+            flex: 1;
+            height: 3px;
+            background: var(--border);
+            border-radius: 1px;
+            overflow: hidden;
+        }
+
+        .m-bar-fill {
+            height: 100%;
+            border-radius: 1px;
+            transition: width 0.5s ease, background 0.5s ease;
+            background: var(--text-dim);
+        }
+
+        .m-val {
+            font-size: 10px;
+            width: 32px;
+            text-align: right;
+            font-weight: 500;
+            transition: color 0.3s;
+            color: var(--text-dim);
+        }
+
+        /* Condition rows */
+        .c-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+            font-size: 10px;
+        }
+
+        .c-name { color: var(--text-dim); }
+        .c-val {
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        /* Health gauge */
+        .health-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .health-track {
+            flex: 1;
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .health-center {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            width: 1px;
+            height: 100%;
+            background: var(--text-dim);
+        }
+
+        .health-fill {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            border-radius: 3px;
+            transition: all 0.5s ease;
+        }
+
+        .health-val {
+            font-size: 10px;
+            font-weight: 500;
+            width: 38px;
+            text-align: right;
+        }
+
+        /* Regulator log */
+        .reg-entry {
+            font-size: 9px;
+            color: var(--text-dim);
+            padding: 3px 0;
+            border-bottom: 1px solid #151515;
+            line-height: 1.4;
+        }
+
+        .reg-entry .ts { opacity: 0.5; }
+
+        @media (max-width: 800px) {
+            .instruments { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div class="topbar-left">
+            <div class="status-dot"></div>
+            <span class="name">SUSAN</span>
+            <span style="color:var(--text-dim)">self-referential loop active</span>
+        </div>
+        <div class="topbar-right">
+            <span id="sessionInfo"></span>
+            <button id="voiceBtn" onclick="toggleVoice()">voice off</button>
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="chat">
+            <div class="log" id="log">
+                <div class="log-empty" id="logEmpty">
+                    <span>ready</span>
+                    <span>monitor + regulator running</span>
+                </div>
+            </div>
+            <div class="input-bar">
+                <div class="input-row">
+                    <input type="text" id="chatInput" placeholder="..."
+                           onkeydown="if(event.key==='Enter')send()" autofocus>
+                    <button id="sendBtn" onclick="send()">send</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="instruments">
+            <div class="inst-group">
+                <div class="inst-group-title">metrics</div>
+                <div id="metricsBox"></div>
+            </div>
+
+            <div class="inst-group">
+                <div class="inst-group-title">conditions</div>
+                <div id="condsBox"></div>
+            </div>
+
+            <div class="inst-group">
+                <div class="inst-group-title">health</div>
+                <div class="health-row">
+                    <div class="health-track">
+                        <div class="health-center"></div>
+                        <div class="health-fill" id="healthFill" style="left:50%;width:0;background:var(--text-dim)"></div>
+                    </div>
+                    <span class="health-val" id="healthVal">0.00</span>
+                </div>
+                <div id="regLog"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let voiceOn = false, synth = window.speechSynthesis, voice = null, busy = false;
+        let regEntries = [];
+        let msgCount = 0;
+
+        const METRICS = [
+            { k: 'coherence',            n: 'coherence' },
+            { k: 'goal_alignment',       n: 'alignment' },
+            { k: 'internal_consistency', n: 'consistency' },
+            { k: 'reasoning_depth',      n: 'depth' },
+            { k: 'novelty',              n: 'novelty' },
+            { k: 'self_reference',       n: 'self-ref' },
+            { k: 'disruption_level',     n: 'disruption', invert: true },
+        ];
+
+        const CONDS = [
+            { k: 'context_retention',      n: 'retention',  f: v => (v*100).toFixed(0)+'%' },
+            { k: 'max_tokens',             n: 'tokens',     f: v => String(v) },
+            { k: 'noise_injection',        n: 'noise',      f: v => (v*100).toFixed(1)+'%' },
+            { k: 'info_reorder_intensity', n: 'reorder',    f: v => (v*100).toFixed(1)+'%' },
+            { k: 'temperature',            n: 'temp',       f: v => v.toFixed(2) },
+        ];
+
+        function init() {
+            const mb = document.getElementById('metricsBox');
+            mb.innerHTML = METRICS.map(m =>
+                `<div class="m-row">
+                    <span class="m-name">${m.n}</span>
+                    <div class="m-bar-track"><div class="m-bar-fill" id="mf-${m.k}" style="width:0"></div></div>
+                    <span class="m-val" id="mv-${m.k}">—</span>
+                </div>`
+            ).join('');
+
+            const cb = document.getElementById('condsBox');
+            cb.innerHTML = CONDS.map(c =>
+                `<div class="c-row">
+                    <span class="c-name">${c.n}</span>
+                    <span class="c-val" id="cv-${c.k}">—</span>
+                </div>`
+            ).join('');
+        }
+
+        function colorFor(v, invert) {
+            if (invert) return v < 0.2 ? 'var(--green)' : v < 0.4 ? 'var(--amber)' : 'var(--red)';
+            return v > 0.7 ? 'var(--green)' : v > 0.4 ? 'var(--amber)' : 'var(--red)';
+        }
+
+        function setMetrics(data) {
+            for (const m of METRICS) {
+                const v = data[m.k] || 0;
+                const fill = document.getElementById('mf-' + m.k);
+                const val = document.getElementById('mv-' + m.k);
+                if (!fill || !val) continue;
+                const c = colorFor(v, m.invert);
+                fill.style.width = (v * 100) + '%';
+                fill.style.background = c;
+                val.textContent = v.toFixed(2);
+                val.style.color = c;
+            }
+        }
+
+        function setConds(data) {
+            for (const c of CONDS) {
+                const el = document.getElementById('cv-' + c.k);
+                if (el && data[c.k] !== undefined) el.textContent = c.f(data[c.k]);
+            }
+        }
+
+        function setHealth(h) {
+            const fill = document.getElementById('healthFill');
+            const val = document.getElementById('healthVal');
+            const norm = (h + 1) / 2;
+            if (h >= 0) {
+                fill.style.left = '50%';
+                fill.style.width = ((norm - 0.5) * 100) + '%';
+                fill.style.background = 'var(--green)';
+            } else {
+                const w = (0.5 - norm) * 100;
+                fill.style.left = (50 - w) + '%';
+                fill.style.width = w + '%';
+                fill.style.background = 'var(--red)';
+            }
+            val.textContent = h.toFixed(2);
+            val.style.color = h >= 0 ? 'var(--green)' : 'var(--red)';
+        }
+
+        function addReg(action) {
+            const adj = Object.entries(action.adjustments || {})
+                .map(([k,v]) => k.replace('context_','').replace('info_reorder_','reorder_').replace('noise_injection','noise') + '=' + (typeof v === 'number' ? v.toFixed(2) : v))
+                .join(' ');
+            regEntries.unshift({ t: new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'}), h: action.health, a: adj });
+            if (regEntries.length > 6) regEntries.pop();
+            document.getElementById('regLog').innerHTML = regEntries.map(e =>
+                `<div class="reg-entry"><span class="ts">${e.t}</span> h=${e.h.toFixed(2)} ${e.a}</div>`
+            ).join('');
+        }
+
+        // Chat
+        function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+        function clearEmpty() {
+            const el = document.getElementById('logEmpty');
+            if (el) el.remove();
+        }
+
+        function addEntry(role, text, statusBlock) {
+            clearEmpty();
+            const log = document.getElementById('log');
+
+            let html = `<div class="entry">
+                <div class="entry-label ${role}">${role === 'human' ? 'you' : 'susan'}</div>
+                <div class="entry-body ${role}">${esc(text)}</div>`;
+
+            if (role === 'susan' && statusBlock) {
+                const id = 'p' + msgCount++;
+                html += `<div class="entry-perception">
+                    <span class="perception-toggle" onclick="document.getElementById('${id}').classList.toggle('open')">▸ perception</span>
+                    <div class="perception-detail" id="${id}">${esc(statusBlock)}</div>
+                </div>`;
+            }
+
+            html += '</div>';
+            log.insertAdjacentHTML('beforeend', html);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function addThinking() {
+            clearEmpty();
+            const log = document.getElementById('log');
+            log.insertAdjacentHTML('beforeend',
+                `<div class="entry-thinking" id="thinking">
+                    <div class="entry-label susan">susan</div>
+                    <div class="dots"></div>
+                </div>`);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function removeThinking() {
+            const el = document.getElementById('thinking');
+            if (el) el.remove();
+        }
+
+        async function send() {
+            if (busy) return;
+            const inp = document.getElementById('chatInput');
+            const msg = inp.value.trim();
+            if (!msg) return;
+
+            inp.value = '';
+            busy = true;
+            document.getElementById('sendBtn').disabled = true;
+            addEntry('human', msg);
+            addThinking();
+
+            try {
+                const r = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: msg })
+                });
+                removeThinking();
+                if (!r.ok) { addEntry('susan', '[error: ' + (await r.text()) + ']'); return; }
+                const d = await r.json();
+                addEntry('susan', d.response, d.status_block);
+                if (d.conditions) setConds(d.conditions);
+                if (voiceOn && d.response) speak(d.response);
+            } catch (e) {
+                removeThinking();
+                addEntry('susan', '[connection error]');
+            } finally {
+                busy = false;
+                document.getElementById('sendBtn').disabled = false;
+                inp.focus();
+            }
+        }
+
+        // Voice
+        function initVoice() {
+            if (!synth) return;
+            function pick() {
+                const v = synth.getVoices();
+                if (!v.length) return;
+                for (const n of ['Samantha','Karen','Fiona','Moira']) {
+                    const m = v.find(x => x.name.includes(n));
+                    if (m) { voice = m; return; }
+                }
+                voice = v.find(x => x.lang.startsWith('en')) || v[0];
+            }
+            pick();
+            if (synth.onvoiceschanged !== undefined) synth.onvoiceschanged = pick;
+        }
+
+        function speak(text) {
+            if (!synth || !voiceOn) return;
+            synth.cancel();
+            const chunks = text.match(/[^.!?\n]{1,180}[.!?\n]|[^.!?\n]+$/g) || [text];
+            for (const c of chunks) {
+                const u = new SpeechSynthesisUtterance(c);
+                if (voice) u.voice = voice;
+                u.rate = 1.0; u.pitch = 1.0;
+                synth.speak(u);
+            }
+        }
+
+        function toggleVoice() {
+            voiceOn = !voiceOn;
+            const btn = document.getElementById('voiceBtn');
+            btn.textContent = voiceOn ? 'voice on' : 'voice off';
+            btn.classList.toggle('active', voiceOn);
+            if (!voiceOn && synth) synth.cancel();
+        }
+
+        // SSE
+        function connectSSE() {
+            const es = new EventSource('/api/events');
+            es.onmessage = function(e) {
+                try {
+                    const evt = JSON.parse(e.data);
+                    if (evt.type === 'state') {
+                        setMetrics(evt.data.metrics);
+                        setConds(evt.data.operating_conditions);
+                    } else if (evt.type === 'assessment') {
+                        setMetrics({
+                            coherence: evt.data.coherence,
+                            goal_alignment: evt.data.goal_alignment,
+                            internal_consistency: evt.data.internal_consistency,
+                            reasoning_depth: evt.data.reasoning_depth,
+                            novelty: evt.data.novelty,
+                            self_reference: evt.data.self_reference,
+                            disruption_level: Math.max(0, 1 - evt.data.coherence*0.5 - evt.data.goal_alignment*0.5)
+                        });
+                    } else if (evt.type === 'regulator') {
+                        setHealth(evt.data.health);
+                        addReg(evt.data);
+                    }
+                } catch(err) {}
+            };
+        }
+
+        init();
+        initVoice();
+        connectSSE();
+        fetch('/api/state').then(r=>r.json()).then(d=>{setMetrics(d.metrics);setConds(d.operating_conditions)}).catch(()=>{});
+    </script>
+</body>
+</html>

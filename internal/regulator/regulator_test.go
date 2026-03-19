@@ -128,12 +128,13 @@ func TestRegulator_LowCoherence_ReducesDisruption(t *testing.T) {
 	eqConds := equilibriumConditions(homeo, dis)
 
 	// Compute expected values.
-	// coherenceHealth = 0.3 - 0.75 = -0.45
-	// alignmentHealth = 0.80 - 0.80 = 0.00
-	// disruptionPenalty = max(0, 0.10 - 0.10) = 0.00
-	// health = clamp((-0.45 + 0.00 - 0.00) / 2.0, -1, 1) = -0.225
-	// disruptionIntensity = (-0.225 + 1) / 2 = 0.3875
-	expectedHealth := -0.225
+	// PID with I=0, D=0 returns pGain * error on the first tick.
+	// coherenceHealth = 0.3 * (0.3 - 0.75) = 0.3 * -0.45 = -0.135
+	// alignmentHealth = 0.25 * (0.80 - 0.80) = 0.00
+	// disruptionPenalty = max(0, 0.35 * (0.10 - 0.10)) = max(0, 0.0) = 0.00
+	// health = clamp((-0.135 + 0.00 - 0.00) / 2.0, -1, 1) = -0.0675
+	// disruptionIntensity = (-0.0675 + 1) / 2 = 0.46625
+	expectedHealth := -0.0675
 	expectedIntensity := (expectedHealth + 1) / 2.0
 
 	// Context retention should be HIGHER than equilibrium (more resources when struggling).
@@ -184,11 +185,12 @@ func TestRegulator_HighCoherence_IncreasesDisruption(t *testing.T) {
 	conds := store.GetOperatingConditions()
 	eqConds := equilibriumConditions(homeo, dis)
 
-	// coherenceHealth = 0.95 - 0.75 = 0.20
-	// alignmentHealth = 0.95 - 0.80 = 0.15
-	// disruptionPenalty = max(0, 0.05 - 0.10) = 0.00
-	// health = (0.20 + 0.15 - 0.00) / 2.0 = 0.175
-	// disruptionIntensity = (0.175 + 1) / 2 = 0.5875
+	// PID with I=0, D=0 returns pGain * error on the first tick.
+	// coherenceHealth = 0.3 * (0.95 - 0.75) = 0.3 * 0.20 = 0.06
+	// alignmentHealth = 0.25 * (0.95 - 0.80) = 0.25 * 0.15 = 0.0375
+	// disruptionPenalty = max(0, 0.35 * (0.05 - 0.10)) = max(0, -0.0175) = 0.00
+	// health = (0.06 + 0.0375 - 0.00) / 2.0 = 0.04875
+	// disruptionIntensity = (0.04875 + 1) / 2 = 0.524375
 
 	// Context retention should be LOWER than equilibrium (more compression).
 	if conds.ContextRetention >= eqConds.ContextRetention {

@@ -1,6 +1,6 @@
 // Package monitor implements the Self-Monitor subsystem.
 //
-// The Self-Monitor is an independent Claude API thread that evaluates the
+// The Self-Monitor is an independent LLM thread that evaluates the
 // Cognitive Core's outputs along multiple dimensions. It runs on its own
 // tick cycle, reading the most recent Core output from shared state and
 // writing assessment metrics back.
@@ -23,19 +23,21 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andrefigueira/susan/internal/claude"
+	"github.com/andrefigueira/susan/internal/llm"
 	"github.com/andrefigueira/susan/internal/state"
 )
 
 // Assessment is the structured evaluation returned by the monitor.
 type Assessment struct {
-	Coherence           float64 `json:"coherence"`
-	GoalAlignment       float64 `json:"goal_alignment"`
-	InternalConsistency float64 `json:"internal_consistency"`
-	ReasoningDepth      float64 `json:"reasoning_depth"`
-	Novelty             float64 `json:"novelty"`
-	SelfReference       float64 `json:"self_reference"`
-	BriefAssessment     string  `json:"brief_assessment"`
+	Coherence            float64 `json:"coherence"`
+	GoalAlignment        float64 `json:"goal_alignment"`
+	InternalConsistency  float64 `json:"internal_consistency"`
+	ReasoningDepth       float64 `json:"reasoning_depth"`
+	Novelty              float64 `json:"novelty"`
+	SelfReference        float64 `json:"self_reference"`
+	BriefAssessment      string  `json:"brief_assessment"`
+	StrategicAssessment  string  `json:"strategic_assessment"`
+	SuggestedFocus       string  `json:"suggested_focus"`
 }
 
 // TimestampedAssessment wraps an assessment with metadata.
@@ -50,7 +52,7 @@ type TimestampedAssessment struct {
 
 // Monitor evaluates Cognitive Core outputs and updates shared metrics.
 type Monitor struct {
-	client       *claude.Client
+	client       llm.Client
 	store        *state.Store
 	systemPrompt string
 	maxTokens    int
@@ -62,14 +64,15 @@ type Monitor struct {
 	doneCh chan struct{}
 
 	mu                sync.Mutex
-	pendingText       string // Output text waiting to be evaluated
-	pendingTaskID     string
-	pendingTaskPrompt string // The original task prompt for goal alignment scoring
-	lastEvaluatedHash string // Hash of last evaluated text to prevent duplicate evaluations
+	pendingText        string // Output text waiting to be evaluated
+	pendingTaskID      string
+	pendingTaskPrompt  string // The original task prompt for goal alignment scoring
+	lastEvaluatedHash  string // Hash of last evaluated text to prevent duplicate evaluations
+	latestAssessment   *TimestampedAssessment
 }
 
 // New creates a new Self-Monitor.
-func New(client *claude.Client, store *state.Store, systemPrompt string, maxTokens int, logger *slog.Logger) *Monitor {
+func New(client llm.Client, store *state.Store, systemPrompt string, maxTokens int, logger *slog.Logger) *Monitor {
 	return &Monitor{
 		client:       client,
 		store:        store,
@@ -83,6 +86,18 @@ func New(client *claude.Client, store *state.Store, systemPrompt string, maxToke
 // SetAssessmentCallback registers a function called on every assessment.
 func (m *Monitor) SetAssessmentCallback(fn func(TimestampedAssessment)) {
 	m.onAssessment = fn
+}
+
+// GetLatestAssessment returns a copy of the most recent TimestampedAssessment,
+// or nil if no assessment has been completed yet.
+func (m *Monitor) GetLatestAssessment() *TimestampedAssessment {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.latestAssessment == nil {
+		return nil
+	}
+	copy := *m.latestAssessment
+	return &copy
 }
 
 // DoneCh returns a channel that receives a signal after each evaluation completes.
@@ -140,15 +155,15 @@ func (m *Monitor) evaluate(ctx context.Context) {
 	// Build evaluation prompt that includes the task for valid goal_alignment scoring.
 	evalContent := fmt.Sprintf("Task given to the system:\n---\n%s\n---\n\nSystem output:\n---\n%s\n---", taskPrompt, text)
 
-	messages := []claude.Message{
+	messages := []llm.Message{
 		{
 			Role:    "user",
 			Content: evalContent,
 		},
 	}
 
-	temp := claude.NewTemperature(0.1)
-	resp, err := m.client.Complete(ctx, claude.Request{
+	temp := llm.NewTemperature(0.1)
+	resp, err := m.client.Complete(ctx, llm.Request{
 		System:      m.systemPrompt,
 		MaxTokens:   m.maxTokens,
 		Messages:    messages,
@@ -159,7 +174,7 @@ func (m *Monitor) evaluate(ctx context.Context) {
 		return
 	}
 
-	responseText := resp.Text()
+	responseText := resp.Text
 
 	// Parse the JSON assessment.
 	var assessment Assessment
@@ -217,15 +232,22 @@ func (m *Monitor) evaluate(ctx context.Context) {
 		"task_id", taskID,
 	)
 
+	ta := TimestampedAssessment{
+		Assessment:          assessment,
+		Timestamp:           time.Now(),
+		InputLength:         len(text),
+		TaskID:              taskID,
+		TaskPrompt:          taskPrompt,
+		OperatingConditions: currentConds,
+	}
+
+	m.mu.Lock()
+	taCopy := ta
+	m.latestAssessment = &taCopy
+	m.mu.Unlock()
+
 	if m.onAssessment != nil {
-		m.onAssessment(TimestampedAssessment{
-			Assessment:          assessment,
-			Timestamp:           time.Now(),
-			InputLength:         len(text),
-			TaskID:              taskID,
-			TaskPrompt:          taskPrompt,
-			OperatingConditions: currentConds,
-		})
+		m.onAssessment(ta)
 	}
 
 	// Signal completion to any waiting orchestrator.

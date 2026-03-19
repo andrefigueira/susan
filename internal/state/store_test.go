@@ -241,6 +241,103 @@ func TestStore_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
+func TestStore_GetMetricsHistory_Empty(t *testing.T) {
+	s := NewStore(20)
+
+	h := s.GetMetricsHistory(5)
+	if h != nil {
+		t.Errorf("expected nil history on fresh store, got %d entries", len(h))
+	}
+}
+
+func TestStore_GetMetricsHistory_Partial(t *testing.T) {
+	s := NewStore(20)
+
+	s.UpdateMetrics("test", func(m *Metrics) { m.Coherence = 0.1 }, "first")
+	s.UpdateMetrics("test", func(m *Metrics) { m.Coherence = 0.2 }, "second")
+
+	h := s.GetMetricsHistory(5)
+	if len(h) != 2 {
+		t.Errorf("expected 2 history entries, got %d", len(h))
+	}
+	if h[0].Coherence != 0.1 {
+		t.Errorf("expected first entry coherence 0.1, got %f", h[0].Coherence)
+	}
+	if h[1].Coherence != 0.2 {
+		t.Errorf("expected second entry coherence 0.2, got %f", h[1].Coherence)
+	}
+}
+
+func TestStore_GetMetricsHistory_Full(t *testing.T) {
+	s := NewStore(20)
+
+	for i := 1; i <= 10; i++ {
+		val := float64(i) / 10.0
+		s.UpdateMetrics("test", func(m *Metrics) { m.Coherence = val }, "update")
+	}
+
+	h := s.GetMetricsHistory(10)
+	if len(h) != 10 {
+		t.Errorf("expected 10 history entries, got %d", len(h))
+	}
+	// Oldest-first: first entry should have coherence 0.1.
+	if h[0].Coherence != 0.1 {
+		t.Errorf("expected oldest entry coherence 0.1, got %f", h[0].Coherence)
+	}
+	// Most recent entry should have coherence 1.0.
+	if h[9].Coherence != 1.0 {
+		t.Errorf("expected newest entry coherence 1.0, got %f", h[9].Coherence)
+	}
+}
+
+func TestStore_GetMetricsHistory_Overflow(t *testing.T) {
+	s := NewStore(20)
+
+	// Write 15 updates; only the last 10 should be retained.
+	for i := 1; i <= 15; i++ {
+		val := float64(i) / 10.0
+		s.UpdateMetrics("test", func(m *Metrics) { m.Coherence = val }, "update")
+	}
+
+	h := s.GetMetricsHistory(10)
+	if len(h) != 10 {
+		t.Errorf("expected 10 history entries after overflow, got %d", len(h))
+	}
+	// Oldest retained entry should be update 6 (coherence 0.6).
+	if h[0].Coherence != 0.6 {
+		t.Errorf("expected oldest retained coherence 0.6, got %f", h[0].Coherence)
+	}
+	// Newest entry should be update 15 (coherence 1.5).
+	if h[9].Coherence != 1.5 {
+		t.Errorf("expected newest retained coherence 1.5, got %f", h[9].Coherence)
+	}
+}
+
+func TestStore_ClearHistory(t *testing.T) {
+	s := NewStore(20)
+
+	s.UpdateMetrics("test", func(m *Metrics) { m.Coherence = 0.5 }, "update")
+	s.UpdateMetrics("test", func(m *Metrics) { m.Coherence = 0.6 }, "update")
+
+	h := s.GetMetricsHistory(10)
+	if len(h) != 2 {
+		t.Fatalf("expected 2 entries before clear, got %d", len(h))
+	}
+
+	s.ClearHistory()
+
+	h = s.GetMetricsHistory(10)
+	if h != nil {
+		t.Errorf("expected nil history after ClearHistory, got %d entries", len(h))
+	}
+
+	// Current metrics should be unaffected by clearing history.
+	m := s.GetMetrics()
+	if m.Coherence != 0.6 {
+		t.Errorf("expected coherence 0.6 after ClearHistory, got %f", m.Coherence)
+	}
+}
+
 func TestStore_Snapshot(t *testing.T) {
 	s := NewStore(20)
 	snap := s.Snapshot()

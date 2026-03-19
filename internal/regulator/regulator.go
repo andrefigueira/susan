@@ -60,6 +60,7 @@ type Regulator struct {
 	disCfg   config.DisruptionConfig
 	store    *state.Store
 	logger   *slog.Logger
+	pid      *PIDController
 	onAction func(Action)
 }
 
@@ -70,7 +71,14 @@ func New(cfg config.HomeostasisConfig, disCfg config.DisruptionConfig, store *st
 		disCfg: disCfg,
 		store:  store,
 		logger: logger,
+		pid:    NewPIDController(),
 	}
+}
+
+// Reset clears accumulated PID state. Call between experiment repetitions to
+// prevent integral history from one run bleeding into the next.
+func (r *Regulator) Reset() {
+	r.pid.Reset()
 }
 
 // SetActionCallback registers a function called on every regulatory action.
@@ -121,15 +129,43 @@ func (r *Regulator) regulate() {
 	currentConds := r.store.GetOperatingConditions()
 	newConds := currentConds
 
-	// Compute signed health signals for each regulated metric.
+	// Compute signed health signals via PID controller for each regulated metric.
 	// Positive = performing above target (system is thriving).
 	// Negative = performing below target (system needs help).
-	coherenceHealth := metrics.Coherence - r.cfg.Coherence.Target
-	alignmentHealth := metrics.GoalAlignment - r.cfg.GoalAlignment.Target
+	//
+	// When IntegralGain=0 and DerivativeGain=0 (default / backward compat),
+	// pid.Compute returns pGain * error which is identical to the previous
+	// proportional-only implementation.
+	coherenceHealth := r.pid.Compute(
+		"coherence",
+		metrics.Coherence-r.cfg.Coherence.Target,
+		r.cfg.Coherence.ProportionalGain,
+		r.cfg.Coherence.IntegralGain,
+		r.cfg.Coherence.DerivativeGain,
+		r.cfg.Coherence.AntiWindupLimit,
+	)
+	alignmentHealth := r.pid.Compute(
+		"alignment",
+		metrics.GoalAlignment-r.cfg.GoalAlignment.Target,
+		r.cfg.GoalAlignment.ProportionalGain,
+		r.cfg.GoalAlignment.IntegralGain,
+		r.cfg.GoalAlignment.DerivativeGain,
+		r.cfg.GoalAlignment.AntiWindupLimit,
+	)
 
 	// Disruption penalty: only applies when disruption EXCEEDS target.
 	// High disruption is a sign the system is already under stress.
-	disruptionPenalty := math.Max(0, metrics.DisruptionLevel-r.cfg.Disruption.Target)
+	// The raw penalty goes through PID to apply the same integral/derivative
+	// treatment; clamp to [0, inf) after so it can only drag health negative.
+	rawDisruptionPenalty := r.pid.Compute(
+		"disruption",
+		metrics.DisruptionLevel-r.cfg.Disruption.Target,
+		r.cfg.Disruption.ProportionalGain,
+		r.cfg.Disruption.IntegralGain,
+		r.cfg.Disruption.DerivativeGain,
+		r.cfg.Disruption.AntiWindupLimit,
+	)
+	disruptionPenalty := math.Max(0, rawDisruptionPenalty)
 
 	// Combined health signal in approximately [-1, 1].
 	// Positive = system is thriving, can handle more challenge.

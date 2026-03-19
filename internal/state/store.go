@@ -81,6 +81,7 @@ type Store struct {
 	metrics             Metrics
 	operatingConditions OperatingConditions
 	conversationHistory []ConversationTurn
+	metricsHistory      []Metrics
 	transitionCount     int
 
 	// Callback for state transition events (for logging subsystem).
@@ -138,6 +139,33 @@ func (s *Store) GetMetrics() Metrics {
 	return s.metrics
 }
 
+// GetMetricsHistory returns a copy of the last n metrics snapshots, or fewer
+// if less than n snapshots are available. Snapshots are ordered oldest-first.
+func (s *Store) GetMetricsHistory(n int) []Metrics {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	total := len(s.metricsHistory)
+	if n <= 0 || total == 0 {
+		return nil
+	}
+	start := total - n
+	if start < 0 {
+		start = 0
+	}
+	slice := s.metricsHistory[start:]
+	out := make([]Metrics, len(slice))
+	copy(out, slice)
+	return out
+}
+
+// ClearHistory removes all stored metrics history entries.
+func (s *Store) ClearHistory() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.metricsHistory = nil
+}
+
 // UpdateMetrics applies a mutation function to a copy of the current metrics,
 // validates the result, records transitions, and fires callbacks after
 // releasing the lock.
@@ -158,6 +186,12 @@ func (s *Store) UpdateMetrics(source string, fn func(*Metrics), reason string) {
 	}
 
 	s.metrics = updated
+
+	// Append a copy to metricsHistory, capped at 10 entries (drop oldest).
+	s.metricsHistory = append(s.metricsHistory, updated)
+	if len(s.metricsHistory) > 10 {
+		s.metricsHistory = s.metricsHistory[len(s.metricsHistory)-10:]
+	}
 
 	// Collect transitions for fields that changed.
 	if old.Coherence != s.metrics.Coherence {

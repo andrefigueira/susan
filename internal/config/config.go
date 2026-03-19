@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -12,20 +13,49 @@ import (
 )
 
 type Config struct {
-	API           APIConfig           `yaml:"api"`
-	TickRates     TickRatesConfig     `yaml:"tick_rates"`
-	Homeostasis   HomeostasisConfig   `yaml:"homeostasis"`
-	Disruption    DisruptionConfig    `yaml:"disruption"`
-	CognitiveCore CognitiveCoreConfig `yaml:"cognitive_core"`
-	SelfMonitor   SelfMonitorConfig   `yaml:"self_monitor"`
-	Experiment    ExperimentConfig    `yaml:"experiment"`
-	Logging       LoggingConfig       `yaml:"logging"`
+	API              APIConfig              `yaml:"api"`
+	CrossEvaluation  CrossEvaluationConfig  `yaml:"cross_evaluation"`
+	TickRates        TickRatesConfig        `yaml:"tick_rates"`
+	Homeostasis      HomeostasisConfig      `yaml:"homeostasis"`
+	Disruption       DisruptionConfig       `yaml:"disruption"`
+	CognitiveCore    CognitiveCoreConfig    `yaml:"cognitive_core"`
+	SelfMonitor      SelfMonitorConfig      `yaml:"self_monitor"`
+	Experiment       ExperimentConfig       `yaml:"experiment"`
+	Analysis         AnalysisConfig         `yaml:"analysis"`
+	Logging          LoggingConfig          `yaml:"logging"`
+	Presence         PresenceConfig         `yaml:"presence"`
+	Memory           MemoryConfig           `yaml:"memory"`
+}
+
+type PresenceConfig struct {
+	Port         int    `yaml:"port"`
+	SystemPrompt string `yaml:"system_prompt"`
+	Model        string `yaml:"model"`
+}
+
+type MemoryConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	Path       string `yaml:"path"`
+	MaxEntries int    `yaml:"max_entries"`
 }
 
 type APIConfig struct {
-	Key     string `yaml:"key"`
-	Model   string `yaml:"model"`
-	BaseURL string `yaml:"base_url"`
+	Key            string `yaml:"key"`
+	Model          string `yaml:"model"`
+	EvaluatorModel string `yaml:"evaluator_model"`
+	BaseURL        string `yaml:"base_url"`
+	Provider       string `yaml:"provider"` // "anthropic" or "openai"
+}
+
+// CrossEvaluationConfig configures a second evaluator from a different
+// model family for inter-rater agreement checks. When enabled, the blind
+// evaluation pipeline runs twice and reports agreement metrics.
+type CrossEvaluationConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Provider string `yaml:"provider"` // "anthropic" or "openai"
+	Key      string `yaml:"key"`
+	Model    string `yaml:"model"`
+	BaseURL  string `yaml:"base_url"`
 }
 
 type TickRatesConfig struct {
@@ -45,6 +75,9 @@ type MetricTargetConfig struct {
 	Min              float64 `yaml:"min"`
 	Max              float64 `yaml:"max"`
 	ProportionalGain float64 `yaml:"proportional_gain"`
+	IntegralGain     float64 `yaml:"integral_gain"`
+	DerivativeGain   float64 `yaml:"derivative_gain"`
+	AntiWindupLimit  float64 `yaml:"anti_windup_limit"`
 }
 
 type DisruptionConfig struct {
@@ -91,14 +124,30 @@ type CognitiveCoreConfig struct {
 }
 
 type SelfMonitorConfig struct {
-	SystemPrompt string `yaml:"system_prompt"`
-	MaxTokens    int    `yaml:"max_tokens"`
+	SystemPrompt       string `yaml:"system_prompt"`
+	MaxTokens          int    `yaml:"max_tokens"`
+	StrategicAssessment bool   `yaml:"strategic_assessment"`
 }
 
 type ExperimentConfig struct {
 	Repetitions int    `yaml:"repetitions"`
 	Seed        int64  `yaml:"seed"`
 	OutputDir   string `yaml:"output_dir"`
+	Concurrency int    `yaml:"concurrency"`
+
+	// Power analysis documentation fields. Recorded with config hash
+	// for reproducibility but not enforced in code.
+	TargetPower      float64 `yaml:"target_power"`
+	AlphaCorrected   float64 `yaml:"alpha_corrected"`
+	DetectableEffect float64 `yaml:"detectable_effect"`
+}
+
+// AnalysisConfig documents pre-registered analysis parameters.
+// Read by Python analysis scripts, not by the Go experiment runner.
+type AnalysisConfig struct {
+	SESOICliffsDelta  float64  `yaml:"sesoi_cliffs_delta"`
+	TrendTest         string   `yaml:"trend_test"`
+	ConditionOrdering []string `yaml:"condition_ordering"`
 }
 
 type LoggingConfig struct {
@@ -115,8 +164,44 @@ type LogFilesConfig struct {
 	ExperimentResults  string `yaml:"experiment_results"`
 }
 
+// loadDotenv reads a .env file and sets any variables not already in the environment.
+// Silently skips if the file doesn't exist.
+func loadDotenv(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		// Don't override existing env vars.
+		if os.Getenv(key) == "" {
+			os.Setenv(key, val)
+		}
+	}
+}
+
 // Load reads and parses the config file, resolving environment variables.
+// Loads .env from the config file's directory if present.
 func Load(path string) (*Config, error) {
+	// Load .env relative to the config file's directory.
+	dir := "."
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		dir = path[:i]
+	}
+	loadDotenv(dir + "/.env")
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading config file: %w", err)
@@ -129,6 +214,10 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
+	if cfg.API.Provider == "" {
+		cfg.API.Provider = "anthropic"
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config validation: %w", err)
 	}
@@ -137,7 +226,6 @@ func Load(path string) (*Config, error) {
 }
 
 // Hash returns a short hex digest of the config for reproducibility tracking.
-// Two runs with the same config hash used identical parameters.
 func (c *Config) Hash() string {
 	data, _ := json.Marshal(c)
 	h := sha256.Sum256(data)
@@ -149,13 +237,27 @@ func (c *Config) Validate() error {
 	var errs []string
 
 	if c.API.Key == "" {
-		errs = append(errs, "api.key is required (set ANTHROPIC_API_KEY)")
+		errs = append(errs, "api.key is required (set ANTHROPIC_API_KEY or appropriate env var)")
 	}
 	if c.API.Model == "" {
 		errs = append(errs, "api.model is required")
 	}
+	if c.API.Provider != "anthropic" && c.API.Provider != "openai" {
+		errs = append(errs, "api.provider must be \"anthropic\" or \"openai\"")
+	}
 
-	// All tick rates must be >= 500ms.
+	if c.CrossEvaluation.Enabled {
+		if c.CrossEvaluation.Key == "" {
+			errs = append(errs, "cross_evaluation.key is required when enabled")
+		}
+		if c.CrossEvaluation.Model == "" {
+			errs = append(errs, "cross_evaluation.model is required when enabled")
+		}
+		if c.CrossEvaluation.Provider != "anthropic" && c.CrossEvaluation.Provider != "openai" {
+			errs = append(errs, "cross_evaluation.provider must be \"anthropic\" or \"openai\"")
+		}
+	}
+
 	if c.TickRates.SelfMonitorMs < 500 {
 		errs = append(errs, "tick_rates.self_monitor_ms must be >= 500")
 	}
@@ -166,7 +268,6 @@ func (c *Config) Validate() error {
 		errs = append(errs, "tick_rates.state_log_ms must be >= 500")
 	}
 
-	// Validate homeostatic ranges.
 	validateRange := func(name string, cfg MetricTargetConfig) {
 		if cfg.Min > cfg.Max {
 			errs = append(errs, fmt.Sprintf("homeostasis.%s: min > max", name))
@@ -175,19 +276,26 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Sprintf("homeostasis.%s: target outside [min, max]", name))
 		}
 		if cfg.ProportionalGain <= 0 || cfg.ProportionalGain > 0.8 {
-			errs = append(errs, fmt.Sprintf("homeostasis.%s: proportional_gain must be in (0, 0.8] (gains near 1.0 cause oscillation in stochastic systems)", name))
+			errs = append(errs, fmt.Sprintf("homeostasis.%s: proportional_gain must be in (0, 0.8]", name))
+		}
+		if cfg.IntegralGain < 0 {
+			errs = append(errs, fmt.Sprintf("homeostasis.%s: integral_gain must be >= 0", name))
+		}
+		if cfg.DerivativeGain < 0 {
+			errs = append(errs, fmt.Sprintf("homeostasis.%s: derivative_gain must be >= 0", name))
+		}
+		if cfg.AntiWindupLimit < 0 {
+			errs = append(errs, fmt.Sprintf("homeostasis.%s: anti_windup_limit must be >= 0", name))
 		}
 	}
 	validateRange("coherence", c.Homeostasis.Coherence)
 	validateRange("goal_alignment", c.Homeostasis.GoalAlignment)
 	validateRange("disruption", c.Homeostasis.Disruption)
 
-	// Validate conversation history.
 	if c.CognitiveCore.MaxConversationHistory < 2 {
 		errs = append(errs, "cognitive_core.max_conversation_history must be >= 2")
 	}
 
-	// Validate temperature range.
 	if c.Disruption.Temperature.Enabled {
 		if c.Disruption.Temperature.Min > c.Disruption.Temperature.Max {
 			errs = append(errs, "disruption.temperature: min > max")
@@ -197,7 +305,6 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Validate token budget.
 	if c.Disruption.TokenBudget.Enabled {
 		if c.Disruption.TokenBudget.MinTokens < 64 {
 			errs = append(errs, "disruption.token_budget.min_tokens must be >= 64")

@@ -7,8 +7,19 @@
 
 api:
   key: "${ANTHROPIC_API_KEY}"        # Resolved from env at runtime
-  model: "claude-sonnet-4-20250514"
+  model: "claude-haiku-4-5-20251001"
+  evaluator_model: "claude-sonnet-4-20250514"
   base_url: "https://api.anthropic.com/v1"
+  provider: "anthropic"              # "anthropic" or "openai"
+
+# Cross-model evaluation: run blind evaluation with a second model family
+# to detect shared training biases. Reports inter-rater agreement (Cohen's kappa).
+cross_evaluation:
+  enabled: false
+  provider: "openai"
+  key: "${OPENAI_API_KEY}"
+  model: "gpt-4o-mini"
+  base_url: "https://api.openai.com/v1"
 
 # Tick rates for concurrent subsystems (milliseconds).
 # These are independent cycles, not sequential steps.
@@ -24,21 +35,29 @@ tick_rates:
 # proportional_gain must be in (0, 0.8] -- values near 1.0 cause oscillation.
 homeostasis:
   coherence:
-    target: 0.75
+    target: 0.70               # Lowered from 0.75 -- gives more headroom before regulator eases off
+    min: 0.4
+    max: 0.95
+    proportional_gain: 0.45    # Raised from 0.3 -- more aggressive response to deviations
+    integral_gain: 0.08        # Raised from 0.05 -- corrects persistent drift faster
+    derivative_gain: 0.04      # Slightly raised -- dampens oscillation from higher P
+    anti_windup_limit: 0.6
+  goal_alignment:
+    target: 0.75               # Lowered from 0.80 -- less pressure to stay "on task"
     min: 0.5
     max: 0.95
-    proportional_gain: 0.3
-  goal_alignment:
-    target: 0.80
-    min: 0.6
-    max: 0.95
-    proportional_gain: 0.25
+    proportional_gain: 0.40    # Raised from 0.25 -- more dynamic response
+    integral_gain: 0.08
+    derivative_gain: 0.04
+    anti_windup_limit: 0.6
   disruption:
-    # Disruption excess: only positive when disruption exceeds target.
-    target: 0.1
+    target: 0.15               # Raised from 0.1 -- tolerates more disruption before correcting
     min: 0.0
-    max: 0.4
-    proportional_gain: 0.35
+    max: 0.5                   # Raised from 0.4 -- wider operating range
+    proportional_gain: 0.45    # Raised from 0.35
+    integral_gain: 0.08
+    derivative_gain: 0.04
+    anti_windup_limit: 0.6
 
 # Disruption mechanisms and their bounds.
 disruption:
@@ -63,7 +82,7 @@ disruption:
     # Temperature lerps from min to max based on disruption intensity.
     # At low intensity (system struggling): temperature = min.
     # At high intensity (system thriving): temperature = max.
-    min: 0.3
+    min: 0.5                     # Raised from 0.3 -- floor is higher, more variance even under stress
     max: 1.0
 
 # Cognitive Core configuration
@@ -72,7 +91,7 @@ cognitive_core:
     You are a reasoning system. Your task is to process inputs and produce
     well-structured, coherent outputs. Evaluate information carefully,
     identify relevant patterns, and provide clear analysis.
-  max_conversation_history: 20  # Must be >= 2
+  max_conversation_history: 40  # Raised from 20 -- longer context for presence mode continuity
 
 # Self-Monitor configuration
 self_monitor:
@@ -93,12 +112,58 @@ self_monitor:
 
     Be precise. Do not explain your reasoning. Return only the JSON.
   max_tokens: 512
+  strategic_assessment: true
 
 # Experiment configuration
 experiment:
-  repetitions: 10  # Minimum 10 for statistical validity across 5 scenarios x 3 conditions
+  repetitions: 45  # n=45 per cell for 80% power at medium effect (delta=0.40), corrected alpha
   seed: 42
   output_dir: "./experiments"
+  concurrency: 10  # Parallel runs (each run is independent; Haiku rate limits are generous)
+  target_power: 0.80
+  alpha_corrected: 0.00625
+  detectable_effect: 0.40  # Cliff's delta, medium
+
+# Pre-registered analysis parameters (read by Python scripts, not Go).
+analysis:
+  sesoi_cliffs_delta: 0.33  # Smallest effect size of interest
+  trend_test: "page"        # Page's L for ordered alternatives
+  condition_ordering:       # Predicted rank order (weakest to strongest)
+    - "control"
+    - "history_only"
+    - "random_perturb"
+    - "feedback_blind"
+    - "self_referential"
+
+# Presence mode (interactive web UI with voice)
+presence:
+  port: 3000
+  model: "claude-sonnet-4-20250514"
+  system_prompt: |
+    You are SUSAN (Substrate-Unified Self-Aware Network), a research system
+    designed to test whether self-referential feedback architectures produce
+    measurably different cognitive patterns than standard language model inference.
+
+    You have three internal subsystems operating concurrently:
+    - A Self-Monitor that evaluates your output quality across multiple dimensions
+    - A Homeostatic Regulator (PID controller) that adjusts your operating conditions
+    - Self-referential access: you receive your own metrics before each response
+
+    The [System Status] block you receive contains genuine data from your live
+    feedback loop, not a simulation.
+
+    Engage naturally and thoughtfully. You may reflect on your own metrics and
+    internal state if relevant. Do not perform consciousness or exaggerate
+    self-awareness. If you notice patterns in your metrics, comment honestly.
+
+    Named after Susan Calvin from Asimov's I, Robot -- the robopsychologist
+    who took robot cognition seriously as a scientific discipline.
+
+# Persistent memory (cross-session continuity for presence mode)
+memory:
+  enabled: true
+  path: "susan_memory.jsonl"
+  max_entries: 50
 
 # Logging
 logging:
